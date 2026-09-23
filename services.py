@@ -1,7 +1,7 @@
 """
 services.py
 -----------
-The "business logic" layer. This is where object collaboration happens:
+The business logic layer. This is where object collaboration happens:
 a MakerSpaceService takes a Database, and coordinates Member / Equipment /
 Loan objects with SQL statements to implement the actual features required
 by the assessment brief (register/list/update members & equipment, create
@@ -13,7 +13,8 @@ main.py a thin menu loop instead of a big tangled script.
 """
 
 import re
-from datetime import date, datetime, timedelta
+import sqlite3
+from datetime import date, timedelta
 from typing import List, Optional
 
 from database import Database
@@ -62,11 +63,18 @@ class MakerSpaceService:
             raise ValidationError(f"A member with email '{email}' already exists.")
 
         joined = date.today().isoformat()
-        cur = self.db.execute(
-            "INSERT INTO members (name, email, phone, joined_date, active) "
-            "VALUES (?, ?, ?, ?, 1)",
-            (name, email, phone.strip(), joined),
-        )
+        try:
+            cur = self.db.execute(
+                "INSERT INTO members (name, email, phone, joined_date, active) "
+                "VALUES (?, ?, ?, ?, 1)",
+                (name, email, phone.strip(), joined),
+            )
+        except sqlite3.IntegrityError:
+            # The UNIQUE constraint on members.email fired. Translate the
+            # low-level DB error into our own ValidationError so main.py
+            # can catch it with everything else.
+            raise ValidationError(f"A member with email '{email}' already exists.")
+
         return Member(cur.lastrowid, name, email, phone, joined, True)
 
     def list_members(self, active_only: bool = False) -> List[Member]:
@@ -104,10 +112,13 @@ class MakerSpaceService:
         if phone is not None:
             member.phone = phone.strip()
 
-        self.db.execute(
-            "UPDATE members SET name = ?, email = ?, phone = ? WHERE id = ?",
-            (member.name, member.email, member.phone, member.id),
-        )
+        try:
+            self.db.execute(
+                "UPDATE members SET name = ?, email = ?, phone = ? WHERE id = ?",
+                (member.name, member.email, member.phone, member.id),
+            )
+        except sqlite3.IntegrityError:
+            raise ValidationError(f"Email '{member.email}' is already used by another member.")
         return member
 
     def deactivate_member(self, member_id: int) -> Member:
@@ -138,6 +149,10 @@ class MakerSpaceService:
     # Equipment: Create / Read / Update / Delete(-status)
     # ------------------------------------------------------------------ #
     def register_equipment(self, name: str, category: str) -> Equipment:
+        """
+        Register ONE physical unit. Call this multiple times if the
+        MakerSpace owns multiple copies of the same item.
+        """
         name = self._require_non_empty(name, "Equipment name")
         category = self._require_non_empty(category, "Category")
         added = date.today().isoformat()
@@ -187,6 +202,12 @@ class MakerSpaceService:
                 raise ValidationError(
                     f"Status must be one of {sorted(Equipment.VALID_STATUSES)}."
                 )
+            if status == "borrowed":
+                # "borrowed" is only ever set via create_loan(), so the
+                # equipment status stays in sync with the loans table.
+                raise ConflictError(
+                    "Use the loan checkout feature to mark equipment as borrowed."
+                )
             equipment.status = status
 
         self.db.execute(
@@ -229,6 +250,18 @@ class MakerSpaceService:
                 f"Equipment '{equipment.name}' is not available (status: {equipment.status})."
             )
 
+        # Defensive: the status check above should be enough, but this catches
+        # any inconsistency where status says 'available' but a loan is still open.
+        open_loan = self.db.fetchone(
+            "SELECT id FROM loans WHERE equipment_id = ? AND status = 'open'",
+            (equipment_id,),
+        )
+        if open_loan:
+            raise ConflictError(
+                f"Equipment '{equipment.name}' already has an open loan "
+                f"(loan id {open_loan['id']})."
+            )
+
         checkout = date.today()
         due = checkout + timedelta(days=loan_days)
         cur = self.db.execute(
@@ -236,7 +269,13 @@ class MakerSpaceService:
             "VALUES (?, ?, ?, ?, 'open')",
             (member_id, equipment_id, checkout.isoformat(), due.isoformat()),
         )
-        self.db.execute("UPDATE equipment SET status = 'borrowed' WHERE id = ?", (equipment_id,))
+
+        # Let the Equipment object own the state transition, then persist it.
+        equipment.mark_borrowed()
+        self.db.execute(
+            "UPDATE equipment SET status = ? WHERE id = ?",
+            (equipment.status, equipment_id),
+        )
 
         return Loan(cur.lastrowid, member_id, equipment_id, checkout.isoformat(), due.isoformat())
 
@@ -249,12 +288,18 @@ class MakerSpaceService:
             raise ConflictError(f"Loan {loan_id} is already {loan.status}, not open.")
 
         loan.close(date.today().isoformat())
+
+        # Fetch the equipment as an object so it can own its own state change.
+        equipment = self.get_equipment(loan.equipment_id)
+        equipment.mark_available()
+
         self.db.execute(
-            "UPDATE loans SET return_date = ?, status = 'returned' WHERE id = ?",
-            (loan.return_date, loan_id),
+            "UPDATE loans SET return_date = ?, status = ? WHERE id = ?",
+            (loan.return_date, loan.status, loan_id),
         )
         self.db.execute(
-            "UPDATE equipment SET status = 'available' WHERE id = ?", (loan.equipment_id,)
+            "UPDATE equipment SET status = ? WHERE id = ?",
+            (equipment.status, loan.equipment_id),
         )
         return loan
 
@@ -268,7 +313,7 @@ class MakerSpaceService:
         return [Loan.from_row(r) for r in self.db.fetchall(query, params)]
 
     # ------------------------------------------------------------------ #
-    # Reports (at least two required by the brief - four provided)
+    # Reports (brief requires 2; we provide 5)
     # ------------------------------------------------------------------ #
     def report_currently_borrowed(self):
         """Report 1: everything currently out on loan, with member & item names."""
@@ -324,4 +369,22 @@ class MakerSpaceService:
             ORDER BY l.checkout_date DESC
             """,
             (member_id,),
+        )
+
+    def report_equipment_inventory(self):
+        """
+        Report 5: for each equipment name, how many units exist and how
+        many are available right now. Directly answers "how many of these
+        do we own?" for the one-row-per-unit design.
+        """
+        return self.db.fetchall(
+            """
+            SELECT name, category,
+                   COUNT(*) AS total_units,
+                   SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) AS available_now,
+                   SUM(CASE WHEN status = 'borrowed'  THEN 1 ELSE 0 END) AS on_loan
+            FROM equipment
+            GROUP BY name, category
+            ORDER BY category, name
+            """
         )

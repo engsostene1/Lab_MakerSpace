@@ -7,11 +7,10 @@ creating the schema (tables), and providing small generic helpers
 
 Keeping all raw SQL and connection handling in one place means the rest
 of the codebase (services.py, models.py) never has to talk to sqlite3
-directly. This is the "data access layer" of the app.
+directly. This is the data access layer of the app.
 """
 
 import sqlite3
-from pathlib import Path
 
 
 class Database:
@@ -63,6 +62,9 @@ class Database:
                 added_date   TEXT NOT NULL
             );
 
+            -- NOTE: "overdue" is NOT a stored status. It is derived at
+            -- query time from (due_date < today AND return_date IS NULL).
+            -- See Loan.is_overdue() in models.py.
             CREATE TABLE IF NOT EXISTS loans (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
                 member_id      INTEGER NOT NULL,
@@ -71,7 +73,7 @@ class Database:
                 due_date       TEXT NOT NULL,
                 return_date    TEXT,
                 status         TEXT NOT NULL DEFAULT 'open'
-                               CHECK (status IN ('open', 'returned', 'overdue')),
+                               CHECK (status IN ('open', 'returned')),
                 FOREIGN KEY (member_id)    REFERENCES members(id),
                 FOREIGN KEY (equipment_id) REFERENCES equipment(id)
             );
@@ -114,7 +116,3 @@ class Database:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
-
-    @staticmethod
-    def db_exists(db_path: str) -> bool:
-        return Path(db_path).exists()

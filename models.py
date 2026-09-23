@@ -1,14 +1,11 @@
 """
 models.py
 ---------
-Domain classes for the Campus MakerSpace Checkout System.
+Domain classes: Member, Equipment, Loan.
 
-These classes model real-world entities (a person, a piece of gear, a
-loan record) and encapsulate behaviour that belongs to them (e.g. an
-Equipment object knows how to check its own availability; a Loan knows
-whether it is overdue). services.py coordinates these objects together
-with the database, but the *rules* about what a Member/Equipment/Loan
-is and does live here.
+Plain Python objects with their own behaviour (e.g. Equipment knows if
+it's available; Loan knows if it's overdue). No SQL lives here —
+services.py handles database access.
 """
 
 from dataclasses import dataclass
@@ -56,7 +53,14 @@ class Member:
 
 @dataclass
 class Equipment:
-    """Represents a piece of borrowable equipment in the MakerSpace."""
+    """
+    Represents ONE physical, borrowable unit.
+
+    If the MakerSpace owns three soldering kits, there are three
+    Equipment rows — each with its own id and status. This keeps
+    loans.equipment_id pointing at a specific physical item, so we
+    always know exactly which unit is out. See DESIGN.md.
+    """
 
     id: Optional[int]
     name: str
@@ -105,7 +109,9 @@ class Loan:
     checkout_date: str
     due_date: str
     return_date: Optional[str] = None
-    status: str = "open"  # open | returned | overdue
+    # Only "open" and "returned" are stored. "overdue" is derived from
+    # due_date < today — see is_overdue() below.
+    status: str = "open"
 
     def is_returned(self) -> bool:
         return self.status == "returned"

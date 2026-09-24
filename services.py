@@ -1,17 +1,8 @@
 """
-services.py
------------
-The business logic layer. This is where object collaboration happens:
-a MakerSpaceService takes a Database, and coordinates Member / Equipment /
-Loan objects with SQL statements to implement the actual features required
-by the assessment brief (register/list/update members & equipment, create
-and close loans with validation, search, and reports).
-
-main.py should only ever talk to this class - it should never touch
-sqlite3 or the Database class directly. That separation is what keeps
-main.py a thin menu loop instead of a big tangled script.
+Every menu action ends up calling one method here. This is where we
+validate input, check rules ("can this member borrow?"), talk to the
+database, and return objects back to the menu.
 """
-
 import re
 import sqlite3
 from datetime import date, timedelta
@@ -24,13 +15,7 @@ from errors import ValidationError, NotFoundError, ConflictError
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 DEFAULT_LOAN_DAYS = 14
 
-
 class MakerSpaceService:
-    """
-    Coordinates Member, Equipment and Loan objects together with the
-    Database. Every public method here corresponds to a menu feature
-    required by the assessment brief.
-    """
 
     def __init__(self, db: Database):
         self.db = db
@@ -52,12 +37,13 @@ class MakerSpaceService:
         return email
 
     # ------------------------------------------------------------------ #
-    # Members: Create / Read / Update / Delete(-status)
+    # Members: Create ; Read ; Update ; Delete(status)
     # ------------------------------------------------------------------ #
     def register_member(self, name: str, email: str, phone: str = "") -> Member:
         name = self._require_non_empty(name, "Name")
         email = self._validate_email(self._require_non_empty(email, "Email"))
 
+         # check email isn't already taken before we try to insert
         existing = self.db.fetchone("SELECT id FROM members WHERE email = ?", (email,))
         if existing:
             raise ValidationError(f"A member with email '{email}' already exists.")
@@ -70,9 +56,8 @@ class MakerSpaceService:
                 (name, email, phone.strip(), joined),
             )
         except sqlite3.IntegrityError:
-            # The UNIQUE constraint on members.email fired. Translate the
-            # low-level DB error into our own ValidationError so main.py
-            # can catch it with everything else.
+            # the UNIQUE constraint also guards against duplicate emails —
+            # translate it into our own error so main.py can catch it
             raise ValidationError(f"A member with email '{email}' already exists.")
 
         return Member(cur.lastrowid, name, email, phone, joined, True)
@@ -97,8 +82,9 @@ class MakerSpaceService:
         email: Optional[str] = None,
         phone: Optional[str] = None,
     ) -> Member:
-        member = self.get_member(member_id)  # raises NotFoundError if missing
+        member = self.get_member(member_id)   # raises NotFoundError if it doesn't exist
 
+        # only change fields the caller actually passed
         if name:
             member.name = self._require_non_empty(name, "Name")
         if email:
@@ -122,8 +108,10 @@ class MakerSpaceService:
         return member
 
     def deactivate_member(self, member_id: int) -> Member:
-        """'Delete' a member = soft delete, so loan history is preserved."""
+        #delete: flip active to 0 so we keep their loan history
         member = self.get_member(member_id)
+
+        # block deactivation if they still have equipment out
         open_loans = self.db.fetchone(
             "SELECT COUNT(*) AS c FROM loans WHERE member_id = ? AND status = 'open'",
             (member_id,),
@@ -137,6 +125,9 @@ class MakerSpaceService:
         return member
 
     def search_members(self, query: str) -> List[Member]:
+        # LIKE with % on both sides = "contains" match.
+        # CAST(id AS TEXT) lets people search by id too.
+
         query = f"%{query.strip()}%"
         rows = self.db.fetchall(
             "SELECT * FROM members WHERE name LIKE ? OR email LIKE ? OR CAST(id AS TEXT) = ? "
@@ -146,13 +137,11 @@ class MakerSpaceService:
         return [Member.from_row(r) for r in rows]
 
     # ------------------------------------------------------------------ #
-    # Equipment: Create / Read / Update / Delete(-status)
+    # Equipment: Create ; Read ; Update ; Delete(status)
     # ------------------------------------------------------------------ #
     def register_equipment(self, name: str, category: str) -> Equipment:
-        """
-        Register ONE physical unit. Call this multiple times if the
-        MakerSpace owns multiple copies of the same item.
-        """
+        # one call = one physical unit. If the space owns 3 soldering kits,
+        # register_equipment gets called 3 times.
         name = self._require_non_empty(name, "Equipment name")
         category = self._require_non_empty(category, "Category")
         added = date.today().isoformat()
@@ -166,6 +155,7 @@ class MakerSpaceService:
     def list_equipment(
         self, status: Optional[str] = None, category: Optional[str] = None
     ) -> List[Equipment]:
+        # WHERE 1=1 is a trick so we can keep appending " AND ..." safely
         query = "SELECT * FROM equipment WHERE 1=1"
         params: list = []
         if status:
@@ -203,8 +193,8 @@ class MakerSpaceService:
                     f"Status must be one of {sorted(Equipment.VALID_STATUSES)}."
                 )
             if status == "borrowed":
-                # "borrowed" is only ever set via create_loan(), so the
-                # equipment status stays in sync with the loans table.
+                 # "borrowed" only happens through create_loan(), so the
+                # equipment status stays in sync with the loans table
                 raise ConflictError(
                     "Use the loan checkout feature to mark equipment as borrowed."
                 )
@@ -217,7 +207,7 @@ class MakerSpaceService:
         return equipment
 
     def retire_equipment(self, equipment_id: int) -> Equipment:
-        """'Delete' equipment = soft delete via 'retired' status."""
+        #delete via 'retired' status — keeps its loan history
         equipment = self.get_equipment(equipment_id)
         if equipment.status == "borrowed":
             raise ConflictError("Cannot retire equipment that is currently on loan.")
@@ -235,23 +225,25 @@ class MakerSpaceService:
         return [Equipment.from_row(r) for r in rows]
 
     # ------------------------------------------------------------------ #
-    # Loans: create (checkout) & return, with validation
+    # Loans: create (checkout) and return, with validation
     # ------------------------------------------------------------------ #
     def create_loan(
         self, member_id: int, equipment_id: int, loan_days: int = DEFAULT_LOAN_DAYS
     ) -> Loan:
+        # step 1: member must exist and be active
         member = self.get_member(member_id)
         if not member.is_active():
             raise ConflictError(f"Member {member_id} is deactivated and cannot borrow equipment.")
-
+        
+        # step 2: equipment must exist and be available
         equipment = self.get_equipment(equipment_id)
         if not equipment.is_available():
             raise ConflictError(
                 f"Equipment '{equipment.name}' is not available (status: {equipment.status})."
             )
 
-        # Defensive: the status check above should be enough, but this catches
-        # any inconsistency where status says 'available' but a loan is still open.
+        # step 3: extra safety — make sure there isn't already an open loan
+        # on this item (catches any status desync)
         open_loan = self.db.fetchone(
             "SELECT id FROM loans WHERE equipment_id = ? AND status = 'open'",
             (equipment_id,),
@@ -262,6 +254,7 @@ class MakerSpaceService:
                 f"(loan id {open_loan['id']})."
             )
 
+        # step 4: write the loan and flip the equipment to 'borrowed'
         checkout = date.today()
         due = checkout + timedelta(days=loan_days)
         cur = self.db.execute(
@@ -269,9 +262,7 @@ class MakerSpaceService:
             "VALUES (?, ?, ?, ?, 'open')",
             (member_id, equipment_id, checkout.isoformat(), due.isoformat()),
         )
-
-        # Let the Equipment object own the state transition, then persist it.
-        equipment.mark_borrowed()
+        equipment.mark_borrowed()    # the object owns its own state change
         self.db.execute(
             "UPDATE equipment SET status = ? WHERE id = ?",
             (equipment.status, equipment_id),
@@ -289,7 +280,7 @@ class MakerSpaceService:
 
         loan.close(date.today().isoformat())
 
-        # Fetch the equipment as an object so it can own its own state change.
+        # free the equipment in the same step — fetch it as an object first
         equipment = self.get_equipment(loan.equipment_id)
         equipment.mark_available()
 
@@ -313,10 +304,10 @@ class MakerSpaceService:
         return [Loan.from_row(r) for r in self.db.fetchall(query, params)]
 
     # ------------------------------------------------------------------ #
-    # Reports (brief requires 2; we provide 5)
+    # Reports
     # ------------------------------------------------------------------ #
     def report_currently_borrowed(self):
-        """Report 1: everything currently out on loan, with member & item names."""
+        # JOINs bring in names so the report is human-readable
         return self.db.fetchall(
             """
             SELECT l.id AS loan_id, m.name AS member_name, e.name AS equipment_name,
@@ -330,7 +321,7 @@ class MakerSpaceService:
         )
 
     def report_overdue_loans(self):
-        """Report 2: open loans whose due_date is before today."""
+        # "overdue" is calculated here from due_date < today
         today = date.today().isoformat()
         return self.db.fetchall(
             """
@@ -346,7 +337,8 @@ class MakerSpaceService:
         )
 
     def report_equipment_by_category(self):
-        """Report 3: equipment counts grouped by category and status."""
+        # GROUP BY = one row per (category, status) pair with a count
+
         return self.db.fetchall(
             """
             SELECT category, status, COUNT(*) AS count
@@ -357,8 +349,8 @@ class MakerSpaceService:
         )
 
     def report_member_history(self, member_id: int):
-        """Report 4: full loan history for a single member."""
-        self.get_member(member_id)  # validates existence
+    
+        self.get_member(member_id)  # raises NotFoundError if the id is bad
         return self.db.fetchall(
             """
             SELECT l.id AS loan_id, e.name AS equipment_name, l.checkout_date,
@@ -372,11 +364,8 @@ class MakerSpaceService:
         )
 
     def report_equipment_inventory(self):
-        """
-        Report 5: for each equipment name, how many units exist and how
-        many are available right now. Directly answers "how many of these
-        do we own?" for the one-row-per-unit design.
-        """
+        # for each item name: how many units exist, how many are out
+        # This is what "one row = one unit" lets us compute.
         return self.db.fetchall(
             """
             SELECT name, category,

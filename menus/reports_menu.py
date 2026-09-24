@@ -1,8 +1,4 @@
-"""
-menus/reports_menu.py
----------------------
-Reports menu: five SQL-backed reports.
-"""
+# Reports menu.
 
 from services import MakerSpaceService
 from errors import MakerSpaceError
@@ -10,6 +6,7 @@ from menus.common import prompt, prompt_int, print_rows
 
 
 def reports_menu(svc: MakerSpaceService) -> None:
+    # loop until the user picks 0 (back to main menu)
     while True:
         print(
             "\n--- Reports ---\n"

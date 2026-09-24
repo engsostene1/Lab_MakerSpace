@@ -1,8 +1,4 @@
-"""
-menus/equipment_menu.py
------------------------
-Equipment menu: register / list / update / retire / search.
-"""
+#Equipment menu.
 
 from services import MakerSpaceService
 from errors import MakerSpaceError
@@ -10,6 +6,7 @@ from menus.common import prompt, prompt_int
 
 
 def equipment_menu(svc: MakerSpaceService) -> None:
+    # loop until the user picks 0 (back to main menu)
     while True:
         print(
             "\n--- Equipment ---\n"
@@ -22,8 +19,10 @@ def equipment_menu(svc: MakerSpaceService) -> None:
         )
         choice = prompt("Choose: ")
 
+        # catch MakerSpaceError so bad input prints a message instead of crashing
         try:
             if choice == "1":
+                # one call = one physical unit
                 name = prompt("Equipment name: ")
                 category = prompt("Category: ")
                 print(f"  Registered: {svc.register_equipment(name, category)}")
@@ -36,6 +35,7 @@ def equipment_menu(svc: MakerSpaceService) -> None:
                     print(" ", e)
 
             elif choice == "3":
+                # update — blank fields are left unchanged
                 eid = prompt_int("Equipment ID to update (c to cancel): ")
                 if eid is None:
                     continue
@@ -49,6 +49,7 @@ def equipment_menu(svc: MakerSpaceService) -> None:
                 print(f"  Updated: {updated}")
 
             elif choice == "4":
+                # retire (soft delete)
                 eid = prompt_int("Equipment ID to retire (c to cancel): ")
                 if eid is None:
                     continue

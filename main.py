@@ -1,18 +1,6 @@
-"""
-main.py
--------
-Entry point for the Campus MakerSpace Checkout System.
+#Opens the database, shows the main menu, and dispatches to the
+#sub-menus imported from the menus package.
 
-This file only:
-    - opens the database,
-    - shows the main menu,
-    - dispatches to the four sub-menu functions from the `menus` package,
-    - handles Ctrl-C and closes the DB cleanly.
-
-All real logic lives in services.py / models.py / database.py.
-Each sub-menu lives in its own module under menus/.
-Run with:  python main.py
-"""
 
 import sqlite3
 import sys
@@ -31,7 +19,7 @@ DB_FILE = "makerspace.db"
 
 
 def main_menu(svc: MakerSpaceService) -> None:
-    """Show the top-level menu and dispatch to sub-menus until Exit."""
+    # top-level loop: pick a section, or 0 to exit
     while True:
         print(
             "\n=== Main Menu ===\n"
@@ -45,7 +33,7 @@ def main_menu(svc: MakerSpaceService) -> None:
             choice = input("Choose: ").strip()
         except EOFError:
             print()
-            return
+            return  # Ctrl-D = clean exit
 
         try:
             if choice == "1":
@@ -65,6 +53,7 @@ def main_menu(svc: MakerSpaceService) -> None:
 
 
 def main() -> None:
+    # open (or create) the database
     try:
         db = Database(DB_FILE)
     except sqlite3.Error as e:
@@ -83,6 +72,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\nInterrupted. Exiting cleanly.")
     finally:
+        # always close the DB, even if we exited with an error
         db.close()
         print("Goodbye!")
 

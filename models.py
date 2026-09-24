@@ -1,21 +1,11 @@
-"""
-models.py
----------
-Domain classes: Member, Equipment, Loan.
-
-Plain Python objects with their own behaviour (e.g. Equipment knows if
-it's available; Loan knows if it's overdue). No SQL lives here —
-services.py handles database access.
-"""
+#Domain classes: Member, Equipment, Loan.
 
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional
 
-
 @dataclass
-class Member:
-    """Represents a MakerSpace member who can borrow equipment."""
+class Member:      #defines a member who can borrow an equipment
 
     id: Optional[int]
     name: str
@@ -27,16 +17,15 @@ class Member:
     def is_active(self) -> bool:
         return bool(self.active)
 
-    def deactivate(self) -> None:
-        """Mark this member as inactive (soft delete)."""
+    def deactivate(self) -> None:     #mark this member as inactive
         self.active = False
 
     def reactivate(self) -> None:
         self.active = True
 
     @classmethod
-    def from_row(cls, row) -> "Member":
-        """Build a Member from a sqlite3.Row returned by the database layer."""
+    def from_row(cls, row) -> "Member":    #Build a Member from a sqlite3.Row returned by the database layer
+        
         return cls(
             id=row["id"],
             name=row["name"],
@@ -53,19 +42,12 @@ class Member:
 
 @dataclass
 class Equipment:
-    """
-    Represents ONE physical, borrowable unit.
-
-    If the MakerSpace owns three soldering kits, there are three
-    Equipment rows — each with its own id and status. This keeps
-    loans.equipment_id pointing at a specific physical item, so we
-    always know exactly which unit is out. See DESIGN.md.
-    """
+    # One row = one physical item. Two soldering kits = two rows.
 
     id: Optional[int]
     name: str
     category: str
-    status: str = "available"  # available | borrowed | maintenance | retired
+    status: str = "available"  # available ; borrowed ; maintenance ; retired
     added_date: str = ""
 
     VALID_STATUSES = {"available", "borrowed", "maintenance", "retired"}
@@ -101,7 +83,6 @@ class Equipment:
 
 @dataclass
 class Loan:
-    """Represents a single checkout of one Equipment item by one Member."""
 
     id: Optional[int]
     member_id: int
@@ -109,21 +90,17 @@ class Loan:
     checkout_date: str
     due_date: str
     return_date: Optional[str] = None
-    # Only "open" and "returned" are stored. "overdue" is derived from
-    # due_date < today — see is_overdue() below.
+    #Only "open" and "returned" are stored. Overdue is calculated, not saved.
     status: str = "open"
 
     def is_returned(self) -> bool:
         return self.status == "returned"
 
     def is_overdue(self, reference_date: Optional[date] = None) -> bool:
-        """
-        A loan is overdue if it is still open and the due_date has passed.
-        `reference_date` defaults to today, but can be injected for testing.
-        """
+        #Only "open" and "returned" are stored. Overdue is calculated, not saved.
         if self.status != "open":
             return False
-        ref = reference_date or date.today()
+        ref = reference_date or date.today()   # allow tests to inject a fake "today"
         due = datetime.strptime(self.due_date, "%Y-%m-%d").date()
         return ref > due
 

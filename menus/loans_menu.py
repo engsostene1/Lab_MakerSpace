@@ -1,8 +1,4 @@
-"""
-menus/loans_menu.py
--------------------
-Loans menu: create checkout / return / list open / list all.
-"""
+# Loans menu.
 
 from services import MakerSpaceService
 from errors import MakerSpaceError
@@ -10,6 +6,7 @@ from menus.common import prompt, prompt_int
 
 
 def loans_menu(svc: MakerSpaceService) -> None:
+    # loop until the user picks 0 (back to main menu)
     while True:
         print(
             "\n--- Loans ---\n"
@@ -23,12 +20,15 @@ def loans_menu(svc: MakerSpaceService) -> None:
 
         try:
             if choice == "1":
+                # checkout: need member id, equipment id, and how many days
                 mid = prompt_int("Member ID (c to cancel): ")
                 if mid is None:
                     continue
                 eid = prompt_int("Equipment ID (c to cancel): ")
                 if eid is None:
                     continue
+
+                # loan length: blank = 14 days; bad input = warn and use 14
                 days_raw = prompt("Loan length in days [default 14, 'c' to cancel]: ")
                 if days_raw.lower() in ("c", "cancel"):
                     continue
@@ -43,6 +43,7 @@ def loans_menu(svc: MakerSpaceService) -> None:
                     except ValueError:
                         print(f"  '{days_raw}' is not a number. Using default 14.")
                         days = 14
+
                 print(f"  Loan created: {svc.create_loan(mid, eid, days)}")
 
             elif choice == "2":

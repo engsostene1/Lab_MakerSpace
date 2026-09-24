@@ -1,16 +1,6 @@
-"""
-seed.py
--------
-Populate makerspace.db with sample data so the app has something to show
-when it's first run. Uses the same MakerSpaceService the app uses, so it
-exercises the normal validation and business rules.
-
-Run with:
-    python3 seed.py
-
-Safe to run on a fresh database. If the sample members already exist
-(same emails), it prints a note and exits without creating duplicates.
-"""
+# seed.py — fills makerspace.db with sample data so the app has
+# something to show on first run. Uses the same MakerSpaceService
+# the app uses, so all the normal rules apply.
 
 from datetime import date, timedelta
 
@@ -26,30 +16,24 @@ def seed() -> None:
     svc = MakerSpaceService(db)
 
     try:
-        # ------------------------------------------------------------------
-        # Members
-        # ------------------------------------------------------------------
+        # --- Members ---
         ada   = svc.register_member("Ada Lovelace",   "ada@example.com",   "555-1001")
         grace = svc.register_member("Grace Hopper",   "grace@example.com", "555-1002")
         alan  = svc.register_member("Alan Turing",    "alan@example.com",  "555-1003")
 
-        # ------------------------------------------------------------------
-        # Equipment — note: one row per PHYSICAL unit.
-        # Three soldering kits = three register_equipment calls.
-        # ------------------------------------------------------------------
+        # --- Equipment ---
+        # One call = one physical unit. Two soldering kits = two calls.
         printer   = svc.register_equipment("3D Printer",    "Printing")
         camera    = svc.register_equipment("DSLR Camera",   "Photography")
         soldering = svc.register_equipment("Soldering Kit", "Electronics")
-        _solder2  = svc.register_equipment("Soldering Kit", "Electronics")  # 2nd copy
+        _solder2  = svc.register_equipment("Soldering Kit", "Electronics")
         laptop    = svc.register_equipment("Laptop",        "Computing")
 
-        # ------------------------------------------------------------------
-        # Loans — create a mix of open, overdue, and returned
-        # ------------------------------------------------------------------
+        # --- Loans ---
         # 1) Ada has the printer — still open
         svc.create_loan(ada.id, printer.id, loan_days=14)
 
-        # 2) Grace has the camera — we'll backdate this to make it overdue
+        # 2) Grace has the camera — we backdate it so the overdue report fires
         overdue_loan = svc.create_loan(grace.id, camera.id, loan_days=14)
         past_checkout = (date.today() - timedelta(days=20)).isoformat()
         past_due      = (date.today() - timedelta(days=6)).isoformat()
@@ -62,19 +46,18 @@ def seed() -> None:
         returned_loan = svc.create_loan(alan.id, soldering.id, loan_days=7)
         svc.return_loan(returned_loan.id)
 
-        # ------------------------------------------------------------------
-        # Summary
-        # ------------------------------------------------------------------
+        # --- Summary ---
         print("Sample data created:")
         print(f"  Members   : 3  (Ada id={ada.id}, Grace id={grace.id}, Alan id={alan.id})")
         print(f"  Equipment : 5  (printer id={printer.id}, camera id={camera.id}, "
               f"soldering ids={soldering.id}/{_solder2.id}, laptop id={laptop.id})")
         print("  Loans     : 3  (1 open, 1 overdue, 1 returned)")
         print()
-        print("Try the app:  python3 main.py")
+        print("Try the app:  python main.py")
         print("  Reports -> 1 (currently borrowed), 2 (overdue), 5 (inventory)")
 
     except MakerSpaceError as e:
+        # most likely the sample data already exists
         print(f"Seed skipped: {e}")
         print("(This usually means the sample data already exists.)")
     finally:

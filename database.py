@@ -1,32 +1,6 @@
-"""
-database.py
------------
-Handles everything related to SQLite: opening/creating the database file,
-creating the schema (tables), and providing small generic helpers
-(execute / fetchone / fetchall) that the rest of the application uses.
-
-Keeping all raw SQL and connection handling in one place means the rest
-of the codebase (services.py, models.py) never has to talk to sqlite3
-directly. This is the data access layer of the app.
-"""
-
 import sqlite3
 
-
 class Database:
-    """
-    Thin wrapper around a sqlite3 connection.
-
-    Responsibilities:
-        - Open (and create if missing) the .db file.
-        - Create the members / equipment / loans tables on first run.
-        - Enforce foreign keys.
-        - Provide execute/fetchone/fetchall helpers used by services.py.
-
-    Using a class (rather than free functions) means we can hold a single
-    open connection for the lifetime of the app and reuse it everywhere.
-    """
-
     def __init__(self, db_path: str = "makerspace.db"):
         self.db_path = db_path
         # check_same_thread=False keeps this simple for a single-threaded
@@ -37,9 +11,10 @@ class Database:
         self.conn.execute("PRAGMA foreign_keys = ON;")
         self._create_tables()
 
-    # ------------------------------------------------------------------ #
-    # Schema
-    # ------------------------------------------------------------------ #
+#schematic diagram of the database tables:
+# members: id, name, email, phone, joined_date, active
+# equipment: id, name, category, status, added_date
+# loans: id, member_id, equipment_id, checkout_date, due_date, return_date
     def _create_tables(self) -> None:
         """Create the three core tables if they do not already exist."""
         self.conn.executescript(
@@ -84,9 +59,6 @@ class Database:
         )
         self.conn.commit()
 
-    # ------------------------------------------------------------------ #
-    # Generic helpers
-    # ------------------------------------------------------------------ #
     def execute(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
         """
         Run an INSERT/UPDATE/DELETE (or any) statement and commit.
@@ -110,7 +82,7 @@ class Database:
     def close(self) -> None:
         self.conn.close()
 
-    # Support "with Database(...) as db:" usage.
+    # Support "with Database(...) as db:" so the connection always closes.
     def __enter__(self):
         return self
 

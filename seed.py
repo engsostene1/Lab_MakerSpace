@@ -1,4 +1,4 @@
-# seed.py — fills makerspace.db with sample data so the app has
+# seed.py — fills makerspace.db with sample data so that the system can have 
 # something to show on first run. Uses the same MakerSpaceService
 # the app uses, so all the normal rules apply.
 

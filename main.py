@@ -74,7 +74,8 @@ def main() -> None:
     finally:
         # always close the DB, even if we exited with an error
         db.close()
-        print("Goodbye!")
+        print("Exiting...")
+        print("Au revoir!")
 
 
 if __name__ == "__main__":
